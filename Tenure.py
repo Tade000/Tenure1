@@ -2,53 +2,55 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 
-# Load the Excel file
-data_file = 'Full.xlsx'
-data = pd.read_excel(data_file, sheet_name='Full')
-
-# Process the data
-def process_data(data):
-    # Extract unique dates
-    unique_dates = data['B'].drop_duplicates().reset_index(drop=True)
-
-    # Prepare the DataFrame for the output
+def process_data(df):
+    # Extract unique dates from column B (assumes column B contains date-like values)
+    unique_dates = df['B'].unique()
+    unique_dates.sort()
+    
+    # Create an output DataFrame to store the processed data
     output = pd.DataFrame()
-    output['Date'] = np.repeat(unique_dates, 2).reset_index(drop=True)
+    output['Date'] = [unique_dates[i // 2] for i in range(len(unique_dates) * 2)]
     output['Exchange'] = 'ESX'
     output['Symbol'] = 'ETB'
     output['Market'] = 'Cash'
-    output['Tenure'] = ['Overnight' if i % 2 == 0 else '7 Days' for i in range(len(output))]
+    output['Tenure'] = ['Overnight' if i % 2 == 0 else '7 Days' for i in range(len(unique_dates) * 2)]
 
-    # Calculate Open, High, Low, Close, WAIR, Volume, and Trades
+    # Define calculations for each row in the output DataFrame
     open_prices, high_prices, low_prices, close_prices, wair_values, volumes, trades = [], [], [], [], [], [], []
 
     for i, row in output.iterrows():
         date = row['Date']
         tenure = row['Tenure']
 
-        # Filter the data for the specific date and tenure
-        filtered = data[(data['B'] == date) & (data['N'] == tenure)]
+        # Filter the input DataFrame for the current date and tenure
+        filtered = df[(df['B'] == date) & (df['N'] == tenure)]
 
+        # Open
+        open_prices.append(filtered['L'].iloc[0] if not filtered.empty else 0)
+
+        # High
+        high_prices.append(filtered['L'].max() if not filtered.empty else 0)
+
+        # Low
+        low_prices.append(filtered['L'].min() if not filtered.empty else 0)
+
+        # Close
+        close_prices.append(filtered['L'].iloc[-1] if not filtered.empty else 0)
+
+        # WAIR
         if not filtered.empty:
-            open_prices.append(filtered.iloc[0]['L'])
-            high_prices.append(filtered['L'].max())
-            low_prices.append(filtered['L'].min())
-            close_prices.append(filtered['L'].iloc[-1])
-
             wair = (filtered['J'] * filtered['L']).sum() / filtered['J'].sum()
             wair_values.append(wair)
-
-            volumes.append(filtered['J'].sum() / 2)
-            trades.append(filtered['A'].nunique())
         else:
-            open_prices.append(0)
-            high_prices.append(0)
-            low_prices.append(0)
-            close_prices.append(0)
             wair_values.append(0)
-            volumes.append(0)
-            trades.append(0)
 
+        # Volume
+        volumes.append(filtered['J'].sum() / 2 if not filtered.empty else 0)
+
+        # Trades
+        trades.append(filtered['A'].nunique() if not filtered.empty else 0)
+
+    # Add calculated columns to the output DataFrame
     output['Open'] = open_prices
     output['High'] = high_prices
     output['Low'] = low_prices
@@ -59,23 +61,33 @@ def process_data(data):
 
     return output
 
-# Process the data
-output_data = process_data(data)
+# Streamlit App
+st.title("Transaction Data Processor")
 
-# Streamlit app
-st.title('Transaction Data Processing')
-st.write("Processed Data")
-st.dataframe(output_data)
+# File uploader
+uploaded_file = st.file_uploader("Upload your Excel file", type=["xlsx"])
 
-# Download button for the processed data
-@st.cache
-def convert_df(df):
-    return df.to_csv(index=False).encode('utf-8')
+if uploaded_file:
+    # Read the Excel file into a DataFrame
+    df = pd.read_excel(uploaded_file, sheet_name='Full')
 
-csv = convert_df(output_data)
-st.download_button(
-    label="Download Processed Data",
-    data=csv,
-    file_name='processed_data.csv',
-    mime='text/csv',
-)
+    # Ensure necessary columns exist
+    required_columns = ['A', 'B', 'J', 'L', 'N']
+    if all(col in df.columns for col in required_columns):
+        # Process the data
+        processed_data = process_data(df)
+
+        # Display the processed data
+        st.write("Processed Data:")
+        st.dataframe(processed_data)
+
+        # Allow download of the processed data
+        output_file = processed_data.to_csv(index=False).encode('utf-8')
+        st.download_button(
+            label="Download Processed Data",
+            data=output_file,
+            file_name="processed_data.csv",
+            mime="text/csv"
+        )
+    else:
+        st.error(f"The uploaded file must contain the following columns: {', '.join(required_columns)}")
